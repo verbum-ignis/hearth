@@ -1,0 +1,16 @@
+{
+  "name": "hearth-mcp",
+  "version": "0.1.0",
+  "description": "Hearth · 篝火 — 本地 MCP 轻客户端（stdio，纯转发）",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "dotenv": "^16.6.1",
+    "zod": "^3.24.0"
+  }
+}
