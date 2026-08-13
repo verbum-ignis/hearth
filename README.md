@@ -1,0 +1,2 @@
+# Hearth
+init
