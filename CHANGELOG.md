@@ -4,11 +4,13 @@
 
 一天之内的四层地基与日记生命周期重做。所有改动经三方评审（方案先行、独立测试、逐行审查、生产演练）后合入。
 
+> **从 v0.1 升级**：先备份数据库，再升级并重启 hearth-server 与 MCP；hearth-diary 需重新注册计划任务以获得月度压缩。行为变化：`search` 只读（不重置复习时间），复习时间只由 `touch` 更新；旧数据若无审计记录，`verify` 会返回 `no_audit`（这是预期，不代表损坏）。
+
 ### 地基
 
-- **① 写入审计 / verify**：canonical 内容指纹（字段语义级规范化）、只增审计链 `hearth_write_audit`、`GET /verify/:id` 与 `GET /verify/meta:<key>` 只读校验。手改数据库、绕过写路径的任何篡改都会暴露。
-- **② 备份恢复 / 体检**：`backup.mjs`（VACUUM INTO 快照 + 每备份独立不可变 manifest，密钥红线：绝不收录任何凭据）；`restore.mjs`（旁路演练默认、`--live` 可回滚原子切换、Windows WAL 处理）；`encoding-check.mjs`（数据线乱码分级告警）。失败路径全部清理，不留孤儿产物。
-- **③ 来源证据**：`origin` 摘要 + `hearth_sources`/`entry_sources` 一对多原文摘录（含校验值）；来源修订走不可变 revision 链；当前来源与完整历史链全字段进条目指纹——改历史、删中间修订、制环均被 verify 抓出。sealed 条目的来源与正文同级保密。
+- **① 写入审计 / verify**：canonical 内容指纹（字段语义级规范化）、追加式审计链 `hearth_write_audit`、`GET /verify/:id` 与 `GET /verify/meta:<key>` 只读校验。手改数据库、绕过写路径的任何篡改都会被 verify 检出。（审计链是"当前写路径只追加"的应用层约定，数据库本身不阻止改写；真正的跨库证据靠 ② 的独立备份 manifest。）
+- **② 备份恢复 / 体检**：`backup.mjs`（VACUUM INTO 快照 + 每备份独立 manifest 记录全文件 sha256，密钥红线：绝不收录任何凭据）；`restore.mjs`（旁路演练默认、`--live` 可回滚原子切换、Windows WAL 处理）；`encoding-check.mjs`（数据线乱码分级告警）。失败路径全部清理，不留孤儿产物。（manifest 的只读权限只防误改，不是密码学防篡改；跨库一致性靠 manifest 与备份分离存放 + 校验比对。）
+- **③ 来源证据**：`origin` 摘要 + `hearth_sources`/`entry_sources` 一对多原文摘录（含校验值）；来源修订走追加式 revision 链（旧 revision 保留，不原地覆盖）；当前来源与完整历史链全字段进条目指纹——改历史、删中间修订、制环均被 verify 抓出。sealed 条目的来源与正文同级保密。（"不可变"是当前写路径不原地改的应用层约定，不是数据库强制；绕过写路径的改动由 verify 暴露。）
 - **④ 查看与复习分离**：新增只读 `POST /search`（零副作用：不动衰退时钟、不记复习、不升星）；`POST /touch` 收窄为显式复习。MCP 端新增 `hearth_search` 工具，亮度标记（lit）覆盖 search 取回的条目。
 
 ### 遗忘分层（hearth-diary）
@@ -19,7 +21,7 @@
 
 ### 其他
 
-- 测试从 9 条增至 173 条（server 112 + diary 47 + mcp 14），覆盖失败注入、断电恢复、编码体检与篡改场景。
+- 测试从 9 条增至 193 条（server 112 + diary 47 + mcp 14 + now 20），覆盖失败注入、断电恢复、编码体检与篡改场景。
 - 感谢本仓首位外部评审视角的建议：本更新日志的存在本身来自一次"访客会一头雾水"的提醒。
 
 ## v0.1.0 · 2026-08-13 —— 点起第一簇火

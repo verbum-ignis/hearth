@@ -1,13 +1,13 @@
 {
   "name": "hearth-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hearth · 篝火 — 本地优先的记忆服务端",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "seed": "node seed/seed.js",
-    "test": "node --test test/contract.test.js"
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

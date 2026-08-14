@@ -26,10 +26,17 @@ Hearth 是一个本地优先的记忆层：记忆保存在你自己的电脑上�
 
 记忆值得像对待身体一样对待。四层地基，全部默认开启：
 
-- **写入审计**：每次写入生成内容指纹（canonical hash）并追加到只增审计链；`GET /verify/:id` 随时校验条目是否被绕过写路径篡改，`GET /verify/meta:<key>` 校验身份卡与主线。
-- **备份与恢复**：`scripts/backup.mjs` 产出带独立 manifest 的一致性快照（不收任何密钥）；`scripts/restore.mjs` 默认只做旁路演练，`--live` 才做可回滚的原子切换；`scripts/encoding-check.mjs` 体检数据乱码。
-- **来源证据**：条目可携带 `origin` 摘要与 `entry_sources` 原文摘录（含校验值）；来源修订走不可变 revision 链，历史与当前一起进指纹——改历史、删历史、制环都会被 verify 抓到。`GET /sources/:id` 读完整证据链（sealed 条目不外泄）。
+- **写入审计**：每次写入生成内容指纹（canonical hash）并追加审计记录；`GET /verify/:id` 随时校验条目是否被绕过写路径修改，`GET /verify/meta:<key>` 校验身份卡与主线。边界说明：审计链是"当前写路径只追加"的应用层约定，数据库本身不阻止修改——它的作用是让绕写改动**被检出**，不是密码学防篡改。
+- **备份与恢复**：`scripts/backup.mjs` 产出带独立 manifest 的一致性快照（不收任何密钥；manifest 置只读是防误改护栏，非不可篡改凭证）；`scripts/restore.mjs` 默认只做旁路演练，`--live` 才做可回滚的原子切换；`scripts/encoding-check.mjs` 体检数据乱码。
+- **来源证据**：条目可携带 `origin` 摘要与 `entry_sources` 原文摘录（含校验值）；来源修订走 revision 链（写路径不原地改），历史与当前一起进指纹——改历史、删历史、制环都会被 verify 检出。`GET /sources/:id` 读完整证据链（sealed 条目不外泄）。
 - **查看与复习分离**：`POST /search` 只读查看（零副作用），`POST /touch` 才是主动复习（重置衰退）。翻看不再污染衰退时钟。
+
+### 从 v0.1 升级
+
+1. **先备份**：升级前对现有 `hearth.db` 跑一次 `scripts/backup.mjs`（或至少复制一份数据库文件）。
+2. 更新代码后**重启 hearth-server 与 MCP 进程**（MCP 是 stdio 进程，重启后才有 `hearth_search` 工具）。新表与新列在启动时自动创建，旧数据不动。
+3. 用 hearth-diary 的话，**重新跑一次 `register-task.ps1`**（或更新你的 cron）以获得月记压缩任务；注意升级后每日任务不再直接退役过期日记。
+4. 语义变化：`hearth_search`/`POST /search` 是只读查看，不影响衰退；`touch` 才更新复习时间。旧条目没有审计记录，`verify` 会返回 `no_audit`（无法校验 ≠ 校验失败），新写入自动进入审计链。
 
 ## 遗忘分层（日记的生命周期）
 

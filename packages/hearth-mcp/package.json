@@ -1,6 +1,6 @@
 {
   "name": "hearth-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hearth · 篝火 — 本地 MCP 轻客户端（stdio，纯转发）",
   "type": "module",
   "main": "src/index.js",
