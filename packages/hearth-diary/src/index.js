@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { extractConversationData } from './extract.js';
-import { cleanupExpiredDiaries, listDiaryEntries, writeDiaryEvents } from './hearth.js';
+import { expiredDiaryReport, listDiaryEntries, writeDiaryEvents } from './hearth.js';
 import { readState, writeState, dateRange } from './state.js';
 import { summarizeConversation } from './summarize.js';
 
@@ -61,8 +61,9 @@ async function main() {
   const target = args.date || yesterday(config.timezone);
   const dates = args.force ? [target] : dateRange(state.last_successful_date, target);
   if (!args.dryRun) {
-    const retired = await cleanupExpiredDiaries(config);
-    for (const entry of retired) console.log(`保质期退场: ${entry.hook} (${entry.id})`);
+    // 只报告不退役：日记的终点（升格豁免 / 压成月记 / empty 归档）全部归 monthly.js 独占
+    const expiring = await expiredDiaryReport(config);
+    for (const entry of expiring) console.log(`已过观察窗，待月记压缩: ${entry.hook} (${entry.id})`);
   }
   if (dates.length === 0) {
     log(`已处理到 ${state.last_successful_date}，无需补写`);

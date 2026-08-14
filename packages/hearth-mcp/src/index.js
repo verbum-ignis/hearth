@@ -11,6 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { mirrorSuccessfulNowWrite } from './now-mirror.mjs';
+import { litIdsFor, markLit, markWriteEvent } from './lit.mjs';
 
 const API_URL = process.env.HEARTH_API_URL;
 const TOKEN = process.env.HEARTH_TOKEN
@@ -114,48 +115,15 @@ async function refreshKeysCache() {
   }
 }
 
-// 亮度标记：load/touch 后刚进上下文的条目
-// 标记 "max"（=刚点亮，具体轮次由 scan-input 下轮换算）——15 轮内 hook 不再提示。
-// 只动 entries，不碰 session/turn（那是 scan-input 的地盘）。失败静默。
+// 亮度标记：load/touch/search 后刚进上下文的条目标 "max"。
+// 实现见 lit.mjs（独立可测）。
 const LIT_STATE_PATH = path.join(path.dirname(CACHE_PATH), 'lit-state.json');
-
-async function markLit(ids) {
-  if (!ids.length) return;
-  try {
-    let state = {};
-    try {
-      state = JSON.parse(await readFile(LIT_STATE_PATH, 'utf8'));
-    } catch {
-      // 没有就新建
-    }
-    if (!state.entries || typeof state.entries !== 'object') state.entries = {};
-    for (const id of ids) state.entries[id] = { lit_at_turn: 'max' };
-    await mkdir(path.dirname(LIT_STATE_PATH), { recursive: true });
-    await writeFile(LIT_STATE_PATH, JSON.stringify(state), 'utf8');
-  } catch {
-    // 静默：亮度是降噪优化，不影响主流程
-  }
-}
-
-async function markWriteEvent() {
-  try {
-    let state = {};
-    try {
-      state = JSON.parse(await readFile(LIT_STATE_PATH, 'utf8'));
-    } catch {}
-    state.last_write_turn = 'max';
-    delete state.last_write_nudge_turn;
-    delete state.last_review_nudge_turn;
-    await mkdir(path.dirname(LIT_STATE_PATH), { recursive: true });
-    await writeFile(LIT_STATE_PATH, JSON.stringify(state), 'utf8');
-  } catch {}
-}
 
 // load 后：keys 缓存里全部可触发条目都算"在上下文里"（目录钩子已展示）
 async function markLitFromCache() {
   try {
     const cache = JSON.parse(await readFile(CACHE_PATH, 'utf8'));
-    await markLit((cache.keys_index || []).map((e) => e.id).filter(Boolean));
+    await markLit(LIT_STATE_PATH, (cache.keys_index || []).map((e) => e.id).filter(Boolean));
   } catch {
     // 静默
   }
@@ -173,17 +141,13 @@ async function call(urlPath, payload) {
   }
   if (urlPath === '/load' || urlPath === '/write') await refreshKeysCache();
   if (urlPath === '/write' && ['create', 'supersede', 'update'].includes(payload?.op)) {
-    void markWriteEvent();
+    void markWriteEvent(LIT_STATE_PATH);
   }
   if (urlPath === '/load') {
     void markLitFromCache();
-  } else if (urlPath === '/touch') {
-    try {
-      const data = JSON.parse(text);
-      void markLit((data.entries || []).map((e) => e.id).filter(Boolean));
-    } catch {
-      // 响应不是 JSON 就算了
-    }
+  } else {
+    const ids = litIdsFor(urlPath, text);
+    if (ids.length) void markLit(LIT_STATE_PATH, ids);
   }
   return { content: [{ type: 'text', text }] };
 }
@@ -192,14 +156,25 @@ const server = new McpServer({ name: 'hearth', version: '0.1.0' });
 
 server.tool(
   'hearth_load',
-  '读档。start=新窗口或压缩后（身份卡、规则、主线、now、目录、核心记忆、窗口留言、今日浮现与回声）；full 在小机主动要求完整回顾时使用。',
+  '读档。start=新窗口/压缩后（身份卡+规则+主线+now+目录+核心记忆(weight=5全文)+上窗口留言+今日浮现+感受回声）；full=人类说唤醒词时用（start 内容+信件提示）。返回必须带 seal 字段且与已知暗语一致，不一致视为异常。',
   { mode: z.enum(['start', 'full']).default('start') },
   async ({ mode }) => call('/load', { mode })
 );
 
 server.tool(
+  'hearth_search',
+  '查看（只读，不复习）。取条目全文，但不重置衰退时钟、不写 touch_log、不触发升星——纯查看。keys=触发词命中（半沉仍可查，沉底>120天失效）；id=显式按名取；archived=true 才含星云（archived）条目，默认不含。返回 entries 全文（≤5条）+ overflow 钩子 + related 关联浮现（body 里 [[链接]] 指向的条目，只给钩子）。要复习（重置衰退）请用 hearth_touch。',
+  {
+    keys: z.array(z.string()).optional(),
+    id: z.string().optional(),
+    archived: z.boolean().optional(),
+  },
+  async ({ keys, id, archived }) => call('/search', { keys, id, archived })
+);
+
+server.tool(
   'hearth_touch',
-  '触发：取条目全文，touch=一次复习（衰退时钟重置，星星飞回篝火边）。tags=触发词命中（半沉仍可触发，沉底>120天失效）；id=显式按名取（任何状态都给）。返回 entries 全文（≤5条）+ overflow 钩子 + related 关联浮现（body 里 [[链接]] 指向的条目，只给钩子）。幂等，去重靠上下文。',
+  '复习（会重置衰退时钟）：取条目全文并重置 last_accessed，星星飞回篝火边。id=显式按名取（任何状态都给）——这是主动复习的唯一正式通道。tags 通道已弃用（兼容保留，勿再用）：查看请走 hearth_search，复习才用本工具。返回 entries 全文（≤5条）+ overflow 钩子 + related 关联浮现（body 里 [[链接]] 指向的条目，只给钩子）。幂等，去重靠上下文。',
   {
     tags: z.array(z.string()).optional(),
     id: z.string().optional(),
@@ -237,7 +212,7 @@ server.tool(
       })
       .optional(),
     key: z
-      .enum(['identity_self', 'identity_human', 'timeline', 'now', 'window_letter'])
+      .enum(['identity_self', 'identity_tang', 'timeline', 'now', 'window_letter'])
       .optional(),
     content: z.string().optional(),
   },

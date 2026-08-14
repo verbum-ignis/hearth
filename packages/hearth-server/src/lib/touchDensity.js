@@ -1,6 +1,7 @@
 import { db } from '../db.js';
-import { TIER_RULES } from './decay.js';
+import { tierRulesFor } from './decay.js';
 import { snapshotEntry } from './snapshot.js';
+import { appendEntryAudit } from './audit.js';
 
 // 调用方负责事务：记一次真正读到全文/主动改写，并在同一事务内检查是否升一级。
 export function recordTouchAndMaybeTierUp(entryId, touchedAt) {
@@ -10,7 +11,8 @@ export function recordTouchAndMaybeTierUp(entryId, touchedAt) {
 
   const entry = db.prepare('SELECT * FROM hearth_entries WHERE id = ?').get(entryId);
   if (!entry) return null;
-  const rule = TIER_RULES.find((candidate) => candidate.from === entry.anchor);
+  // 日记遗忘分层：stream 0→1 走快车道（7 天窗 2 日），其余类型走通用 TIER_RULES
+  const rule = tierRulesFor(entry.type).find((candidate) => candidate.from === entry.anchor);
   if (!rule) return null;
 
   if (entry.tier_since && rule.minGapDays > 0) {
@@ -34,5 +36,6 @@ export function recordTouchAndMaybeTierUp(entryId, touchedAt) {
   db.prepare(`
     UPDATE hearth_entries SET anchor = ?, tier_since = ?, updated_at = ? WHERE id = ?
   `).run(rule.to, touchedAt, touchedAt, entryId);
+  appendEntryAudit(entryId, 'tier_up'); // anchor 是 canonical 字段，升星必须留审计行
   return { from: rule.from, to: rule.to };
 }

@@ -83,11 +83,14 @@ function expiredDiaryEntries(entries, nowMs = Date.now()) {
     && Date.parse(`${entry.last_accessed}Z`) < cutoff);
 }
 
-export async function cleanupExpiredDiaries(config, nowMs = Date.now()) {
+// 通道 B 上线后：日记的生命周期终点归月记管线（monthly.js）独占。
+// 每日任务只报告到期，不再直接 retire——否则候选活不到月记开工就被删了。
+export async function expiredDiaryReport(config, nowMs = Date.now()) {
   const entries = await listDiaryEntries(config);
-  const expired = expiredDiaryEntries(entries, nowMs);
-  for (const entry of expired) await request(config, '/write', { op: 'retire', id: entry.id });
-  return expired.map((entry) => ({ id: entry.id, hook: entry.hook }));
+  return expiredDiaryEntries(entries, nowMs).map((entry) => ({ id: entry.id, hook: entry.hook }));
 }
+
+// 通道 B（月记压缩）用：导出底层请求与日记日期解析
+export { request as hearthRequest, diaryDate };
 
 export const _test = { parsedKeys, diaryDate, createPayload, expiredDiaryEntries };

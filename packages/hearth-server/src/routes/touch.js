@@ -5,6 +5,9 @@ import { recordTouchAndMaybeTierUp } from '../lib/touchDensity.js';
 // touch = 一次复习：返回全文的条目 last_accessed 重置，星星飞回篝火边。
 // tags 模式走 keys 触发通道（沉底档 keys 失效）；id 模式是显式按名取，任何 status 都给。
 // 幂等，去重靠上下文。
+//
+// ④ 弃用标注：tags 通道即将废弃——查看走 /search（只读），复习才走 touch 且只认显式 id。
+// 本轮保留 tags 兼容（老调用不破），迁移完成后删除 tags 分支。
 
 const FULL_LIMIT = 5;
 
@@ -36,6 +39,7 @@ function rowToEntry(row) {
     tier_since: row.tier_since,
     trigger_date: row.trigger_date,
     status: row.status,
+    origin: row.origin ?? 'unknown', // ③：来源摘要随读取端返回，NULL 显式呈现为 unknown
     band: starBand(row), // touch 前它在哪——从黑暗里捞回来这件事本身有信息量
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -118,7 +122,7 @@ export function touchErrorStatus(err) {
   return err instanceof TouchError ? err.status : null;
 }
 
-// keys 索引：输入扫描 hook 的本地缓存与小机直接查词表。范围与 tags 触发同口径。
+// keys 索引：输入扫描 hook 的本地缓存 + 小机直接查词表。范围与 tags 触发同口径。
 export function handleKeysIndex() {
   const rows = db.prepare(`
     SELECT id, hook, keys, weight FROM hearth_entries WHERE ${TOUCHABLE_FILTER}

@@ -11,26 +11,26 @@ function getMeta(key) {
 
 export function handleLoad(mode) {
   const identitySelf = getMeta('identity_self');
-  const identityHuman = getMeta('identity_human');
+  const identityTang = getMeta('identity_tang');
   const timeline = getMeta('timeline');
   const nowMeta = getMeta('now');
   const windowLetter = getMeta('window_letter');
 
   // rule 常驻例外：等触发就晚了，全文随身份卡返回，不衰退
   const rules = db.prepare(`
-    SELECT id, hook, body FROM hearth_entries
+    SELECT id, hook, body, origin FROM hearth_entries
     WHERE type = 'rule' AND status = 'active' AND sealed = 0
     ORDER BY created_at ASC
-  `).all();
+  `).all().map((r) => ({ ...r, origin: r.origin ?? 'unknown' }));
 
   const directory = activeDirectoryRows().map((r) => `[${r.type}] ${r.hook}`);
 
   // 权重5 = 新窗口必读：不等触发，load 时全文带出（rule 已常驻，不重复取）
   const coreMemories = db.prepare(`
-    SELECT id, hook, body, weight FROM hearth_entries
+    SELECT id, hook, body, weight, origin FROM hearth_entries
     WHERE weight = 5 AND status = 'active' AND sealed = 0 AND type != 'rule'
     ORDER BY created_at ASC
-  `).all();
+  `).all().map((r) => ({ ...r, origin: r.origin ?? 'unknown' }));
 
   // 今日浮现：到期未处理的时间触发（含错过的日子——那天没开窗口不该静默丢失）
   const todaySurfacing = db.prepare(`
@@ -42,12 +42,15 @@ export function handleLoad(mode) {
 
   // 感受回声：存在超 30 天的经历体条目随机一条，不去重——旧日记被风翻到某一页。
   // 只算浮现不算复习，不更新 last_accessed。
-  const echo = db.prepare(`
-    SELECT id, hook, body, created_at FROM hearth_entries
-    WHERE type IN ('event','project','stream') AND status = 'active' AND sealed = 0
-      AND created_at <= datetime('now', '-${ECHO_MIN_AGE_DAYS} days')
-    ORDER BY RANDOM() LIMIT 1
-  `).get() || null;
+  const echo = (() => {
+    const row = db.prepare(`
+      SELECT id, hook, body, created_at, origin FROM hearth_entries
+      WHERE type IN ('event','project','stream') AND status = 'active' AND sealed = 0
+        AND created_at <= datetime('now', '-${ECHO_MIN_AGE_DAYS} days')
+      ORDER BY RANDOM() LIMIT 1
+    `).get();
+    return row ? { ...row, origin: row.origin ?? 'unknown' } : null;
+  })();
 
   // 最近日记只浮现摘要，不算复习；小机显式 touch 展开时才重置衰退并记触发。
   // 按 created_at 取——"最近"指最近写下的，不是最近被翻到的；
@@ -77,7 +80,7 @@ export function handleLoad(mode) {
   const payload = {
     identity: {
       self: identitySelf ? identitySelf.content : null,
-      human: identityHuman ? identityHuman.content : null,
+      tang: identityTang ? identityTang.content : null,
     },
     rules,
     timeline: timeline ? timeline.content : null,

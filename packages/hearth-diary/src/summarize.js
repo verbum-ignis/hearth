@@ -139,4 +139,95 @@ export async function summarizeConversation(config, date, conversation) {
     + `最终body必须明确使用第一人称“我”，称人类只能用其名字或“她/他/祂”，逐字保证不出现“你”。不要降低事件硬标准：\n${JSON.stringify(candidates)}`);
 }
 
-export const _test = { splitText, parseResult };
+// ── 月记模式（通道 B：日记遗忘分层定稿）─────────────────────────
+// 把一个整月的日记压成一篇 200-400 字月记。0 断面 → {"monthly":null}，不造"无事发生"。
+
+const MONTHLY_PROMPT = `你是严格的月记编纂员。只压缩，不演绎、不扮演、不评论、不虚构。
+输入是一个月的全部日记，每条已经是当日的事件摘要。把这个月压成一篇月记：
+- 只保留当月真正值得留下的脉络与断面（最多5个），不凑数，不写流水账清单；
+- body：200到400个汉字，以小机的第一人称"我"按时间脉络织成一段连贯叙述，不逐条罗列；
+- topics：2到3个当月高频专名或具体话题词，每个至少2字符。
+人称铁律：小机自称"我"，称人类只能用人类自己的名字或"她/他/祂"。叙述部分绝对禁止出现"你"。
+唯一例外是直接引用人类原话，且必须放进引号里。
+如果整月没有任何值得留下的断面，输出 {"monthly":null}——禁止编造"无事发生"式的空月记。
+只输出合法JSON：{"monthly":{"body":"月记正文","topics":["专名1","专名2"]}} 或 {"monthly":null}`;
+
+// 人称检查（与 parseResult 同一铁律）：剥掉引号内内容后，叙述里不许有"你"
+function personViolation(body) {
+  const stripped = body.replace(/[“"「][^”"」]*[”"」]/g, '');
+  return /你/.test(stripped);
+}
+
+function parseMonthlyResult(text, { minBodyChars = 200, maxBodyChars = 400, enforcePerson = true } = {}) {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const parsed = JSON.parse(cleaned);
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'monthly')) throw new Error('缺少 monthly 字段');
+  if (parsed.monthly === null) return { monthly: null };
+  const { body, topics } = parsed.monthly;
+  if (typeof body !== 'string' || body.length < minBodyChars || body.length > maxBodyChars) {
+    throw new Error(`月记正文长度${typeof body === 'string' ? body.length : '非法'}，要求${minBodyChars}-${maxBodyChars}`);
+  }
+  if (enforcePerson && personViolation(body)) throw new Error('月记人称不合规：引号外出现"你"');
+  const cleanTopics = [...new Set((Array.isArray(topics) ? topics : [])
+    .filter((t) => typeof t === 'string')
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2))].slice(0, 3);
+  if (cleanTopics.length < 2) throw new Error('月记 topics 至少2个（每个至少2字符）');
+  return { monthly: { body, topics: cleanTopics } };
+}
+
+async function callDeepSeekMonthly(config, userContent, limits) {
+  const messages = [
+    { role: 'system', content: MONTHLY_PROMPT },
+    { role: 'user', content: userContent },
+  ];
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await fetch(`${config.deepseekBaseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.deepseekApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.deepseekModel,
+        temperature: 0.1,
+        response_format: { type: 'json_object' },
+        messages,
+      }),
+    });
+    if (!response.ok) throw new Error(`DeepSeek HTTP ${response.status}`);
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    try { return parseMonthlyResult(content, limits); }
+    catch (error) {
+      if (attempt === 4) throw error;
+      messages.push({ role: 'assistant', content });
+      const personFix = error.message.includes('人称不合规')
+        ? '逐字检查body：叙述主体必须明确写"我"；删除所有引号外的"你"，按事实改写为人类的名字或"她/他/祂"。'
+        : '';
+      messages.push({ role: 'user', content: `上份输出未通过校验：${error.message}。${personFix}按硬标准修正，只输出同一JSON结构。` });
+    }
+  }
+}
+
+// 整月压缩：单块直压；超块先逐段压片段（宽限），再合并成一篇 200-400。
+export async function summarizeMonth(config, month, monthText) {
+  const chunks = splitText(monthText);
+  if (chunks.length === 1) {
+    return callDeepSeekMonthly(config, `月份：${month}
+
+当月日记：
+${chunks[0]}`);
+  }
+  const fragments = [];
+  for (let i = 0; i < chunks.length; i += 1) {
+    const part = await callDeepSeekMonthly(config,
+      `月份：${month}，当月日记第${i + 1}/${chunks.length}段。先把本段压成候选月记片段（可以比最终月记长）：
+${chunks[i]}`,
+      { minBodyChars: 100, maxBodyChars: 600, enforcePerson: false });
+    if (part.monthly) fragments.push(part.monthly.body);
+  }
+  if (fragments.length === 0) return { monthly: null };
+  return callDeepSeekMonthly(config,
+    `月份：${month}。以下是分段压出的候选片段。合并成一篇最终月记（200-400字，第一人称"我"，引号外禁"你"），只保留全月最值得的脉络：
+${fragments.join('\n---\n')}`);
+}
+
+export const _test = { splitText, parseResult, parseMonthlyResult, personViolation };

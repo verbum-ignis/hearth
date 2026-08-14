@@ -1,12 +1,13 @@
-import 'dotenv/config';
 import express from 'express';
 import { handleLoad } from './routes/load.js';
 import { handleWrite } from './routes/write.js';
 import { handleTouch, touchErrorStatus, handleKeysIndex } from './routes/touch.js';
+import { handleSearch, searchErrorStatus } from './routes/search.js';
 import { handleStars, handleDustDetail } from './routes/stars.js';
+import { handleVerify } from './routes/verify.js';
+import { handleSources } from './routes/sources.js';
 
 const PORT = process.env.HEARTH_PORT || 3002;
-const HOST = process.env.HEARTH_HOST || '127.0.0.1';
 const TOKEN = process.env.HEARTH_TOKEN;
 const SEAL = process.env.HEARTH_SEAL;
 
@@ -50,6 +51,16 @@ app.post('/touch', (req, res) => {
   }
 });
 
+app.post('/search', (req, res) => {
+  try {
+    reply(res, 200, handleSearch(req.body));
+  } catch (err) {
+    const status = searchErrorStatus(err);
+    if (status) return reply(res, status, { error: err.message });
+    throw err;
+  }
+});
+
 app.get('/keys', (req, res) => reply(res, 200, handleKeysIndex()));
 
 app.get('/stars', (req, res) => reply(res, 200, handleStars()));
@@ -60,6 +71,16 @@ app.get('/dust/:historyId', (req, res) => {
   reply(res, 200, row);
 });
 
+app.get('/verify/:id', (req, res) => {
+  const { status, body } = handleVerify(req.params.id);
+  reply(res, status, body);
+});
+
+app.get('/sources/:entryId', (req, res) => {
+  const { status, body } = handleSources(req.params.entryId);
+  reply(res, status, body);
+});
+
 app.get('/health', (req, res) => reply(res, 200, { ok: true }));
 
 app.use((err, req, res, next) => {
@@ -67,6 +88,6 @@ app.use((err, req, res, next) => {
   reply(res, 500, { error: 'internal error' });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`hearth-server listening on http://${HOST}:${PORT}`);
+app.listen(PORT, () => {
+  console.log(`hearth-server listening on :${PORT}`);
 });

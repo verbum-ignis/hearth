@@ -50,10 +50,43 @@ CREATE TABLE IF NOT EXISTS hearth_touch_log (
   touched_at TEXT NOT NULL
 );
 
+-- ① 写入审计：追加式，只 INSERT。meta 用 'meta:<key>' 作 entry_id。
+CREATE TABLE IF NOT EXISTS hearth_write_audit (
+  revision       INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id       TEXT NOT NULL,
+  op             TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  created_at     TEXT NOT NULL
+);
+
+-- ③ source 证据：原始来源记录。写路径只增不改——修正 = 新增一行（revision_of 指向被修正的那行）。
+-- 注意：无 DB trigger 禁 UPDATE/DELETE，这是应用层约束，不是数据库级不可变。
+CREATE TABLE IF NOT EXISTS hearth_sources (
+  source_id   TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  summary     TEXT NOT NULL,
+  excerpt     TEXT,
+  range       TEXT,
+  checksum    TEXT,
+  revision_of TEXT,
+  created_at  TEXT NOT NULL
+);
+
+-- ③ 条目↔来源一对多引用。链接可随 source_revise 指向新 revision，历史链在 hearth_sources.revision_of 里。
+CREATE TABLE IF NOT EXISTS entry_sources (
+  entry_id   TEXT NOT NULL,
+  source_id  TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (entry_id, source_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_entries_status ON hearth_entries(status);
 CREATE INDEX IF NOT EXISTS idx_entries_type ON hearth_entries(type);
 CREATE INDEX IF NOT EXISTS idx_history_target ON hearth_history(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_touchlog_entry ON hearth_touch_log(entry_id, touched_at);
+CREATE INDEX IF NOT EXISTS idx_audit_entry ON hearth_write_audit(entry_id, revision);
+CREATE INDEX IF NOT EXISTS idx_entry_sources_entry ON entry_sources(entry_id);
+CREATE INDEX IF NOT EXISTS idx_sources_revision ON hearth_sources(revision_of);
 `);
 
 // H9 兼容旧库：CREATE TABLE IF NOT EXISTS 不会给既有表补列。
@@ -63,6 +96,10 @@ if (!entryColumns.some((column) => column.name === 'tier_since')) {
 }
 if (!entryColumns.some((column) => column.name === 'weight')) {
   db.exec(`ALTER TABLE hearth_entries ADD COLUMN weight INTEGER NOT NULL DEFAULT 3`);
+}
+// ③ origin：来源摘要。旧条目保持 NULL = unknown（显式语义，不许悄悄当 manual）
+if (!entryColumns.some((column) => column.name === 'origin')) {
+  db.exec(`ALTER TABLE hearth_entries ADD COLUMN origin TEXT`);
 }
 
 // 时间戳一律服务器打，本地时钟不可信

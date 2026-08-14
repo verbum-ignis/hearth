@@ -19,6 +19,16 @@ export const TIER_RULES = [
   { from: 2, to: 3, minGapDays: 21, windowDays: 60, distinctDays: 2 },
 ];
 
+// 日记遗忘分层（通道 A）：stream 的 0→1 走快车道——流水 7 天就沉，通用 14 天窗够不着。
+// 一本日记被跨两天翻过，说明它值得留下（anchor=1 进目录、豁免月记压缩）。
+// 1→2、2→3 仍走通用 TIER_RULES（继续熬），不继续用快车道。
+const STREAM_FIRST_STEP = { from: 0, to: 1, minGapDays: 0, windowDays: 7, distinctDays: 2 };
+
+export function tierRulesFor(type) {
+  if (type === 'stream') return [STREAM_FIRST_STEP, ...TIER_RULES.slice(1)];
+  return TIER_RULES;
+}
+
 const TIER_BANDS = { 1: 'glimmer', 2: 'beacon', 3: 'anchor' };
 const TIER_DECAY_MULTIPLIER = { 0: 1, 1: 2, 2: 4 };
 
